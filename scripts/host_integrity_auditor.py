@@ -63,7 +63,7 @@ def audit_windowserver() -> dict:
         "strict_verify_passed": ver_res.returncode == 0,
         "cdhash": cdhash,
         "library_validation_enforced": lib_val,
-        "arm64e_pac_architecture": "ARM64E" in otool_res.stdout.upper(),
+        "arm64e_pac_architecture": "arm64e" in out.lower() or "ARM64E" in otool_res.stdout.upper(),
     }
 
 

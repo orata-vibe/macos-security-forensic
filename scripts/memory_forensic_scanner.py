@@ -44,7 +44,12 @@ def is_jit_expected_process(cmd_line: str) -> bool:
         return True
     if "/Contents/MacOS/Electron" in cmd_line and "--type=" not in cmd_line:
         return True
-    if cmd_line.startswith("node ") or "/bin/node" in cmd_line or "/Cellar/node/" in cmd_line:
+    if (
+        cmd_line.startswith(("node ", "npm "))
+        or "/bin/node" in cmd_line
+        or "/bin/npm" in cmd_line
+        or "/Cellar/node/" in cmd_line
+    ):
         return True
     if "WebKit.WebContent" in cmd_line or "JavaScriptCore" in cmd_line:
         return True
@@ -97,7 +102,7 @@ def inspect_pid_vmmap(pid: int, user: str, cmd: str) -> dict:
         if "x" not in cur_prot:
             continue
 
-        if rtype == "__TEXT":
+        if rtype in ("__TEXT", "unused __TEXT"):
             text_count += 1
             continue
 

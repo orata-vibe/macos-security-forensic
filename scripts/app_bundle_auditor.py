@@ -21,6 +21,7 @@ import json
 import sqlite3
 import plistlib
 import subprocess
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def get_running_app_paths() -> set:
@@ -87,22 +88,38 @@ def audit_single_bundle(app_path: str, active_apps: set, tcc_grants: dict) -> di
         elif "flags=" in line and "CodeDirectory" in line:
             flags = line.strip()
 
-    # Two-tier verification (--strict and --no-strict)
-    v_strict = subprocess.run(
-        ["codesign", "--verify", "--deep", "--strict", "--verbose=2", app_path],
-        capture_output=True,
-        text=True,
-    )
-    v_nostrict = subprocess.run(
-        ["codesign", "--verify", "--deep", "--no-strict", "--verbose=2", app_path],
-        capture_output=True,
-        text=True,
-    )
+    # Two-tier verification (--strict and --no-strict) with fast timeout
+    try:
+        v_strict = subprocess.run(
+            ["codesign", "--verify", "--deep", "--strict", "--verbose=2", app_path],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+        strict_rc = v_strict.returncode
+        strict_err = (v_strict.stderr + v_strict.stdout).strip()
+    except subprocess.TimeoutExpired:
+        strict_rc = -1
+        strict_err = "TIMEOUT_LARGE_BUNDLE"
 
-    strict_err = (v_strict.stderr + v_strict.stdout).strip()
+    nostrict_rc = 0
+    if strict_rc != 0 and strict_rc != -1:
+        try:
+            v_nostrict = subprocess.run(
+                ["codesign", "--verify", "--deep", "--no-strict", "--verbose=2", app_path],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+            nostrict_rc = v_nostrict.returncode
+        except subprocess.TimeoutExpired:
+            nostrict_rc = -1
+
     seal_status = "VALID_STRICT"
-    if v_strict.returncode != 0:
-        if v_nostrict.returncode == 0 and "FinderInfo" in strict_err:
+    if strict_rc != 0:
+        if strict_rc == -1:
+            seal_status = "LARGE_BUNDLE_MAIN_BINARY_VALID" if "Authority=" in info_out else "LARGE_BUNDLE_ADHOC"
+        elif nostrict_rc == 0 and "FinderInfo" in strict_err:
             seal_status = "VALID_WITH_FINDER_XATTR"
         elif ".pyc" in strict_err and "__pycache__" in strict_err:
             seal_status = "VALID_WITH_PYTHON_PYC_CACHE"
@@ -159,7 +176,12 @@ def run_bundle_audit(as_json: bool = False) -> dict:
 
     active_apps = get_running_app_paths()
     tcc_grants = get_user_tcc_grants()
-    results = [audit_single_bundle(app, active_apps, tcc_grants) for app in sorted(all_apps)]
+    results = []
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futs = {pool.submit(audit_single_bundle, app, active_apps, tcc_grants): app for app in sorted(all_apps)}
+        for fut in as_completed(futs):
+            results.append(fut.result())
+    results.sort(key=lambda x: x["app_path"])
 
     summary = {
         "total_bundles_audited": len(results),

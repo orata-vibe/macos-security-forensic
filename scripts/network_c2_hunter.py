@@ -54,10 +54,12 @@ def parse_netstat_inet(proto: str) -> list:
                 continue
             proc_pid = parts[9] if len(parts) > 9 else "unknown:0"
 
-        if ":" in proc_pid:
-            proc_name, pid_str = proc_pid.rsplit(":", 1)
+        m_proc = re.search(r"\s+([A-Za-z0-9_.\- ]+?):(\d+)\s+[0-9a-fA-F]{5}\s+", line)
+        if m_proc:
+            proc_name = m_proc.group(1).strip()
+            pid_str = m_proc.group(2)
         else:
-            proc_name, pid_str = proc_pid, "0"
+            proc_name, pid_str = "unknown", "0"
 
         is_loopback = local_addr.startswith(("127.0.0.1.", "::1.", "fe80:")) and foreign_addr.startswith(
             ("127.0.0.1.", "::1.", "fe80:", "*.*")
@@ -100,9 +102,11 @@ def map_utun_owners() -> list:
         try:
             ctl_idx = parts.index("com.apple.net.utun_control")
             unit_num = int(parts[ctl_idx - 1])
+            if unit_num <= 0 or unit_num > 256:
+                continue
             if_name = f"utun{unit_num - 1}"
         except Exception:
-            if_name = "utun?"
+            continue
         utuns.append({"interface": if_name, "owner": proc_pid})
     return utuns
 
